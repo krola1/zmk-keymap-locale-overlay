@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name ZMK Keymap Editor – Locale Overlay
 // @namespace http://tampermonkey.net/
-// @version 1.0.1
+// @version 1.0.2
 // @description Translates displayed key labels in the ZMK Keymap Editor to your keyboard locale
 // @author krola1
 // @match https://nickcoutsos.github.io/keymap-editor/*
@@ -129,7 +129,7 @@
         MINUS: '+',
         EQUAL: '\\',
         GRAVE: '|',
-        NUBS: '<',         // non-US backslash, present on ISO boards
+        NON_US_BSLH: '<',  // non-US backslash, present on ISO boards
 
         // Shifted variants (when the editor encodes them as LS(...))
         'LS(APOS)':  'Æ',
@@ -142,7 +142,7 @@
         'LS(MINUS)': '?',
         'LS(EQUAL)': '`',
         'LS(GRAVE)': '§',
-        'LS(NUBS)':  '>',
+        'LS(NON_US_BSLH)': '>',
 
         // Number row shifted symbols differ from US on Norwegian
         'LS(N1)': '!',
@@ -172,7 +172,7 @@
         MINUS: '+',
         EQUAL: '\\',
         GRAVE: '§',
-        NUBS:  '<'
+        NON_US_BSLH: '<'
       }
     },
 
@@ -190,7 +190,7 @@
         MINUS: '+',
         EQUAL: '\\',
         GRAVE: '§',
-        NUBS:  '<'
+        NON_US_BSLH: '<'
       }
     },
 
@@ -208,12 +208,76 @@
         MINUS: 'ß',
         EQUAL: '´',
         GRAVE: '^',
-        NUBS:  '<',
+        NON_US_BSLH: '<',
         Y:    'Z',
         Z:    'Y'
       }
     }
   };
+
+  // ------------------------------------------------------------------
+  // Keycode aliases
+  //
+  // ZMK exposes every keycode under multiple names (e.g. APOS, SQT,
+  // APOSTROPHE and SINGLE_QUOTE all refer to the same physical key).
+  // Whichever name the user typed into their .keymap file is what ends
+  // up in the editor's `title` attribute, so a keymap that uses
+  // `&kp SINGLE_QUOTE` will render `(SINGLE_QUOTE) ...` and would
+  // otherwise miss a layout entry keyed on `APOS`.
+  //
+  // We therefore normalize every extracted code to a canonical short
+  // form before looking it up in the active layout map. Layouts only
+  // need to define the canonical form (the short alias, e.g. `APOS`).
+  // ------------------------------------------------------------------
+  const ALIASES = (() => {
+    const groups = [
+      // [canonical, ...aliases that should resolve to it]
+      ['APOS',  'SQT', 'APOSTROPHE', 'SINGLE_QUOTE'],
+      ['SEMI',  'SEMICOLON'],
+      ['LBKT',  'LEFT_BRACKET'],
+      ['RBKT',  'RIGHT_BRACKET'],
+      ['BSLH',  'BACKSLASH'],
+      ['SLASH', 'FSLH'],
+      ['NON_US_BSLH', 'NON_US_BACKSLASH'],
+      // Number row
+      ['N1', 'NUMBER_1'],
+      ['N2', 'NUMBER_2'],
+      ['N3', 'NUMBER_3'],
+      ['N4', 'NUMBER_4'],
+      ['N5', 'NUMBER_5'],
+      ['N6', 'NUMBER_6'],
+      ['N7', 'NUMBER_7'],
+      ['N8', 'NUMBER_8'],
+      ['N9', 'NUMBER_9'],
+      ['N0', 'NUMBER_0']
+    ];
+    const out = Object.create(null);
+    for (const [canonical, ...aliases] of groups) {
+      out[canonical] = canonical;
+      for (const a of aliases) out[a] = canonical;
+    }
+    return out;
+  })();
+
+  // Normalize a ZMK code (as it appears in the editor's `title`
+  // attribute) to the canonical short alias used by LAYOUTS. Falls
+  // back to the original code so unknown keys are still translated if
+  // a layout defines them directly.
+  function normalizeCode(code) {
+    if (!code) return code;
+    if (Object.prototype.hasOwnProperty.call(ALIASES, code)) return ALIASES[code];
+    // Handle modifier-function forms like `LS(SINGLE_QUOTE)` by
+    // normalizing the inner code too: LS(SINGLE_QUOTE) -> LS(APOS).
+    const m = /^([A-Z]+)\(([^)]+)\)$/.exec(code);
+    if (m) {
+      const inner = m[2];
+      const innerNorm = Object.prototype.hasOwnProperty.call(ALIASES, inner)
+        ? ALIASES[inner]
+        : inner;
+      return `${m[1]}(${innerNorm})`;
+    }
+    return code;
+  }
 
   // ------------------------------------------------------------------
   // State
@@ -260,6 +324,7 @@
 
     const code = extractCode(span);
     if (!code) return;
+    const lookupCode = normalizeCode(code);
 
     // Cache original visible text on the first visit.
     if (!span.hasAttribute('data-original')) {
@@ -269,8 +334,8 @@
     const original = span.getAttribute('data-original');
 
     const map = currentMap();
-    const translated = Object.prototype.hasOwnProperty.call(map, code)
-      ? map[code]
+    const translated = Object.prototype.hasOwnProperty.call(map, lookupCode)
+      ? map[lookupCode]
       : null;
 
     if (state.enabled && translated !== null && isPlainTextSpan(span)) {
@@ -311,9 +376,10 @@
       return;
     }
     const code = extractCode(span);
+    const lookupCode = normalizeCode(code);
     const map = currentMap();
-    if (code && Object.prototype.hasOwnProperty.call(map, code)) {
-      span.textContent = map[code];
+    if (lookupCode && Object.prototype.hasOwnProperty.call(map, lookupCode)) {
+      span.textContent = map[lookupCode];
     }
     span.classList.remove('locale-overlay-hint');
   }
