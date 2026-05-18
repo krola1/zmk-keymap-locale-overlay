@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name ZMK Keymap Editor – Locale Overlay
 // @namespace http://tampermonkey.net/
-// @version 1.0.0
+// @version 1.0.1
 // @description Translates displayed key labels in the ZMK Keymap Editor to your keyboard locale
 // @author krola1
 // @match https://nickcoutsos.github.io/keymap-editor/*
@@ -296,11 +296,16 @@
     if (span.getAttribute('data-locale-overlay-translated') !== '1') return;
     const original = span.getAttribute('data-original');
     if (original === null) return;
+    // Set the hover flag BEFORE mutating textContent so the
+    // MutationObserver does not race in and re-translate the span.
+    span.setAttribute('data-locale-overlay-hovering', '1');
     span.textContent = original;
     span.classList.add('locale-overlay-hint');
   }
   function onLeave(e) {
     const span = e.currentTarget;
+    // Clear the hover flag first so re-translation is allowed again.
+    span.removeAttribute('data-locale-overlay-hovering');
     if (span.getAttribute('data-locale-overlay-translated') !== '1') {
       span.classList.remove('locale-overlay-hint');
       return;
@@ -335,6 +340,21 @@
         if (m.type === 'attributes' && m.target instanceof Element) {
           translateNode(m.target);
           continue;
+        }
+        // React frequently reconciles a key's visible text by replacing
+        // its child text node. The mutation arrives as a childList change
+        // on the existing span with only Text nodes in addedNodes (which
+        // the loop below skips). Re-translate the target span directly so
+        // our overlay survives any React re-render. We skip while the
+        // user is hovering — onEnter intentionally shows the original.
+        if (
+          m.type === 'childList' &&
+          m.target instanceof Element &&
+          m.target.matches &&
+          m.target.matches(SELECTOR) &&
+          m.target.getAttribute('data-locale-overlay-hovering') !== '1'
+        ) {
+          translateNode(m.target);
         }
         m.addedNodes && m.addedNodes.forEach(node => {
           if (!(node instanceof Element)) return;
